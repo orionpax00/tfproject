@@ -79,6 +79,6 @@ class Engine:
 
             return history
         else:
-            raise Exception('Fit_engine is only available for Tnsorflow')
+            raise Exception('Fit_engine is only available for Tensorflow')
 
 

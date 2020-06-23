@@ -6,7 +6,7 @@
 
 * [Getting Started](#getting-started)
 
-**Note** : For exhuastive environment setup checkout [https://orionpax00.github.io/blogs/datascience/work_environment.html](https://orionpax00.github.io/blogs/datascience/work_environment.html)
+**Note** : For exhaustive environment setup checkout [https://orionpax00.github.io/blogs/datascience/work_environment.html](https://orionpax00.github.io/blogs/datascience/work_environment.html)
 
 
 ## Getting Started
