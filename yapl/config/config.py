@@ -1,3 +1,4 @@
+import os
 import yaml
 import yapl
 
@@ -26,12 +27,8 @@ class Config:
         self.EXPERIMENT_NAME = 'img_class_resner50_trail25'
         self.DATATYPE = 'img' #img: if images; text: if textual; tabular: if csv tabular
         self.PROBLEM_TYPE = 'classification' #classification, regression
-        
-        self.GCS_DS_PATH = KaggleDatasets().get_gcs_path('<dataset-name>')
         self.TRAIN_CSV = '../input/<dataset-name>/train.csv'
         self.TEST_CSV = '../input/<dataset-name>/test.csv'
-        # self.TRAIN_FILES = tf.io.gfile.glob(GCS_DS_PATH + '<files>*')
-        # self.TEST_FILES = tf.io.gfile.glob(GCS_DS_PATH + '<files>')
         self.VALIDATION_CSV = ""
         
         self.TOTAL_TRAIN_IMG = 0
@@ -70,3 +67,35 @@ class Config:
 
     def make_global(self):
         yapl.config = self
+
+    def setupTPU(self):
+        if yapl.backend == 'tf':
+            try:
+                tpu = tf.distribute.cluster_resolver.TPUClusterResolver()
+                print('Running on TPU ', tpu.master())
+            except ValueError:
+                tpu = None
+
+            if tpu:
+                tf.config.experimental_connect_to_cluster(tpu)
+                tf.tpu.experimental.initialize_tpu_system(tpu)
+                strategy = tf.distribute.experimental.TPUStrategy(tpu)
+                self.STRATEGY = strategy
+                self.BATCH_SIZE = 32 * strategy.num_replicas_in_sync 
+            else:
+                strategy = tf.distribute.get_strategy() 
+
+        if yapl.backend == 'torch':
+            # write some thing for assertion
+            try:
+                os.system('curl https://raw.githubusercontent.com/pytorch/xla/master/contrib/scripts/env-setup.py -o pytorch-xla-env-setup.py')
+                os.system('python pytorch-xla-env-setup.py --version nightly --apt-packages libomp5 libopenblas-dev')
+
+                print("ADD THESE IMPORTS IF NOT ALREADY")
+                print("import torch_xla.core.xla_model as xm\nimport torch_xla.distributed.parallel_loader as pl\nimport torch_xla.distributed.xla_multiprocessing as xmp")
+                import torch_xla.core.xla_model as xm
+
+                self.DEVICE = xm.xla_device()
+                self.STRATEGY = tpu
+            except:
+                self.STRATEGY = None

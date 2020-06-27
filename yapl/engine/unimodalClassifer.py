@@ -6,6 +6,17 @@ import yapl
 from yapl.utils.accuracy import AverageBinaryAccuracyTorch
 from yapl.utils.loss import AverageLossTorch
 
+try:
+    import torch_xla.core.xla_model as xm
+    import torch_xla.distributed.parallel_loader as pl
+    _is_xla = True
+except ImportError:
+    _is_xla = False
+
+def reduce_fn(vals):
+    return sum(vals) / len(vals)
+
+
 class Engine:
     def __init__(self, model, traindataloader, valdataloder = None, testdataloader=None):
         self.model = model
@@ -19,7 +30,7 @@ class Engine:
                 epoch_loss_avg = tf.keras.metrics.Mean()
                 epoch_accuracy_avg = tf.keras.metrics.AUC()
 
-                for it, (data_batch, label_batch) in enumerate(traindataloader):
+                for it, (data_batch, label_batch) in enumerate(self.traindataloader):
                     with tf.GradientTape() as tape:
                         output = self.model(data_batch, training=True)
                         losses = self.config.LOSS(y_true = label_batch, y_pred=output)
@@ -38,29 +49,41 @@ class Engine:
                 # Do prediction
 
         elif yapl.backend == 'torch':
+            if yapl.config.STRATEGY != None and _is_xla == False :
+                raise Exception("TPUs are not setup properly for TPU training")
+                
+            if yapl.config.STRATEGY != None and _is_xla == True:
+                traindataloader = pl.ParallelLoader(self.traindataloader, [yapl.config.DEVICE])
+
             history = []
             self.model.train()
             for epoch in self.config.EPOCHES:
                 loss_avg = AverageLossTorch()
-                for (data_batch, label_batch) in traindataloader:
+                for (data_batch, label_batch) in self.traindataloader:
                     data_batch = data_batch.to(self.config.DEVICE, dtype=torch.float)
                     label_batch = label_batch.to(self.config.DEVICE, dtype=torch.float)
                     
                     self.config.OPTIMIZER.zero_grad()
                     output = self.model(data_batch)
-                    
                     losses = self.config.LOSS(output, label_batch.unsqueeze(1))
-                    losses.backward()
-                    self.config.OPTIMIZER.step()
-                    
-                    loss_avg.update(losses.item(), self.config.BATCH_SIZE)
+
+                    if yapl.config.STRATEGY != None and _is_xla == True: 
+                        losses.backward()
+                        xm.optimizer_step(self.config.OPTIMIZER)
+
+                        reduced_loss = xm.mesh_reduce('loss_reduce', losses, reduce_fn)
+                        loss_avg.update(reduced_loss.item(), self.traindataloader.batch_size)
+
+                    else:
+                        losses.backward()
+                        self.config.OPTIMIZER.step()
+                        loss_avg.update(losses.item(), self.traindataloader.batch_size)
+
                     # TODO: implement AUC metrics
                     
                     del data_batch
                     del label_batch
                     
-                    torch.cuda.empty_cache()
-
                 print("{} - LOSS: {}".format(epoch, loss_avg.avg))
                 history.append(loss_avg.avg)
 
