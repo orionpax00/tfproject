@@ -1,3 +1,4 @@
+![Upload Python Package](https://github.com/orionpax00/yapl/workflows/Upload%20Python%20Package/badge.svg?branch=master&event=push)
 # yapl : Yet Another Python Library
 
 > Collection of frequently used python function for Data Analysis and Machine Learning
