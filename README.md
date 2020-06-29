@@ -15,7 +15,7 @@ pip install yapl
 ```
 ### Prerequisites
 
-* tensorflow>=2.0.0
+* tensorflow
 * pytorch
 
 
