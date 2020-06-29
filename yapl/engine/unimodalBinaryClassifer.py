@@ -2,6 +2,9 @@ import torch
 from torch.utils.tensorboard import SummaryWriter
 import tensorflow as tf
 
+import pandas as pd
+import numpy as np
+
 import yapl
 
 from yapl.utils.accuracy import AverageBinaryAccuracyTorch
@@ -21,15 +24,20 @@ def reduce_fn(vals):
 class Engine:
     def __init__(self, model, traindataloader, valdataloder = None, testdataloader=None, logger=None):
         self.config = yapl.config
-        self.history = []
-
+        self.history = {
+            'LOSS' : [],
+            'ACCURACY' : [],
+            'VAL_LOSS' : []
+            }
+        self.history_logger = None
+        self.writer = None
         if logger != None:
             self._activate_logger(logger['loggers'], logger['folder_name'])
             self.writer.add_graph(model)
+        self.predictions = None
 
     def loop(self):
         if yapl.backend == 'tf':
-            history = []
             for epoch in range(self.config.EPOCHES):
                 epoch_loss_avg = tf.keras.metrics.Mean()
                 epoch_accuracy_avg = tf.keras.metrics.AUC()
@@ -44,7 +52,8 @@ class Engine:
                         epoch_accuracy_avg.update_state(label_batch, tf.squeeze(output))
 
                 print('{} - Loss: {} | Accuracy: {}'.format(epoch, epoch_loss_avg.result(), epoch_accuracy_avg.result()))
-                history.append((epoch_loss_avg.result(), epoch_accuracy_avg.result()))
+                self.history['LOSS'].append(epoch_loss_avg.result())
+                self.history['ACCURACY'].append(epoch_accuracy_avg.result())
             
                 if valdataloder != None:
                     # Do validation Loop
@@ -89,15 +98,58 @@ class Engine:
                     
                 print("{} - LOSS: {}".format(epoch, loss_avg.avg))
                 self.writer.add_scalar('Loss/train', loss_avg.avg, epoch)
-                self.history.append(loss_avg.avg)
+                self.history['LOSS'].append(loss_avg.avg)
 
                 if valdataloder != None:
-                # Do validation Loop
+                    model.eval()
+                    loss_avg = AverageLossTorch()
+                    with torch.no_grad():
+                        if yapl.config.STRATEGY != None and _is_xla == True:
+                            traindataloader = pl.ParallelLoader(traindataloader, [yapl.config.DEVICE])
+                        
+                        for (data_batch, label_batch) in valdataloder:
+                            data_batch = data_batch.to(self.config.DEVICE, dtype=torch.float)
+                            label_batch = label_batch.to(self.config.DEVICE, dtype=torch.float)
+                            
+                            output = model(data_batch)
+                            losses = self.config.LOSS(output, label_batch.unsqueeze(1))
+
+                            if yapl.config.STRATEGY != None and _is_xla == True: 
+                                reduced_loss = xm.mesh_reduce('loss_reduce', losses, reduce_fn)
+                                loss_avg.update(reduced_loss.item(), traindataloader.batch_size)
+
+                            else:
+                                loss_avg.update(losses.item(), traindataloader.batch_size)
+
+                            # TODO: implement AUC metrics
+                            
+                            del data_batch
+                            del label_batch
+                            
+                        print("{} - VAL LOSS: {}".format(epoch, loss_avg.avg))
+                        self.writer.add_scalar('Loss/Val', loss_avg.avg, epoch)
+                        self.history['VAL_LOSS'].append(loss_avg.avg)
 
             if testdataloader != None:
-                # Do prediction
-    
-        self.writer.close()
+                predictions = []
+                ids = []
+                model.eval()
+                with torch.no_grad():
+                    for data_batch, id_batch in traindataloader:
+                        data_batch = data_batch.to(self.config.DEVICE, dtype=torch.float)
+                        pred = model(data_batch)
+                        predictions.append(pred.cpu().numpy())
+                        ids.append(id_batch.numpy())
+
+                self.predictions = {
+                    "id" : np.stack(ids),
+                    "predictions" : np.stack(predictions)
+                }
+                
+        if self.writer != None:
+            self.writer.close()
+        if self.history_logger != None:
+            pd.DataFrame({self.history}).to_csv(self.history_logger, index=False)
 
     def fit(self, istraining = True):
         if yapl.backend == 'tf':
@@ -131,5 +183,9 @@ class Engine:
         
         for logger in loggers:
             if logger == 'tensorboard':
-                self.writer = SummaryWriter(folder_loc)
+                self.writer = SummaryWriter(folder_loc, comment= "___" + yapl.config.EXPERIMENT_NAME)
+        
+        for logger in loggers:
+            if logger == 'history':
+                self.history_logger = folder_loc+'/history.csv'
 
