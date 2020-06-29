@@ -59,9 +59,22 @@ class Config:
         self.CHECKPOINT_DIR = './log/checkpoint/cp.cpkt'
 
 
-    def dumpconfig(self, location):
-        with open(location, 'w') as dumpfile:
-            yaml.dump(self.__dict__, dumpfile)
+    def dumpconfig(self, location, toyml=False):
+        if yapl.config.backend == 'torch':
+            LOSS_PARAM = {}
+            for key, values in  yapl.config.LOSS.__dict__.items():
+                try:
+                    LOSS_PARAM[key] = dict(values)
+                except:
+                    LOSS_PARAM[key] = values
+            
+            yapl.config.LOSS = LOSS_PARAM
+
+        if toyml:
+            with open(location, 'w') as dumpfile:
+                yaml.dump(self.__dict__, dumpfile)
+        else:
+            raise Exception("yet to implement")
 
         return "you file has successfully saved"
 
